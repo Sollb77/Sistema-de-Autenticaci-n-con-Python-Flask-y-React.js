@@ -1,26 +1,25 @@
-"""
-This module takes care of starting the API Server, Loading the DB and Adding the endpoints
-"""
+# This module takes care of starting the API Server, Loading the DB and Adding the endpoints
+
 import os
+import json
 from flask import Flask, request, jsonify, url_for, send_from_directory
 from flask_migrate import Migrate
 from flask_swagger import swagger
 from flask_cors import CORS
 from api.utils import APIException, generate_sitemap
-from api.models import db
+from api.models import db, User
 from api.routes import api
 from api.admin import setup_admin
 from api.commands import setup_commands
-from utils import APIException, generate_sitemap
-from admin import setup_admin
-from models import db, User
-#from models import Person
+
+# JWT Imports
 
 from flask_jwt_extended import create_access_token
 from flask_jwt_extended import get_jwt_identity
 from flask_jwt_extended import jwt_required
 from flask_jwt_extended import JWTManager
 
+#from models import Person
 
 ENV = os.getenv("FLASK_ENV")
 static_file_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), '../public/')
@@ -55,12 +54,53 @@ app.register_blueprint(api, url_prefix='/api')
 def handle_invalid_usage(error):
     return jsonify(error.to_dict()), error.status_code
 
+# Setup the Flask-JWT-Extended extension
+
+app.config["JWT_SECRET_KEY"] = "my-super-secret-key"  # Change this!
+jwt = JWTManager(app)
+
 # generate sitemap with all your endpoints
 @app.route('/')
 def sitemap():
     if ENV == "development":
         return generate_sitemap(app)
     return send_from_directory(static_file_dir, 'index.html')
+
+@app.route('/login', methods=["POST"])
+def login():
+    email = request.json.get("email", None)
+    password = request.json.get("password", None)
+    user = User.query.filter_by(email=email).first()
+
+    if email != user.email or password != user.password:
+        return jsonify({"msg": "Bad email or password"}), 401
+
+    access_token = create_access_token(identity=email)
+    return jsonify(access_token=access_token)
+
+# Protect a route with jwt_required, which will kick out requests
+# without a valid JWT present.
+@app.route("/private", methods=["GET"])
+@jwt_required()
+def private():
+    # Access the identity of the current user with get_jwt_identity
+    current_user = get_jwt_identity()
+    return jsonify(logged_in_as=current_user), 200
+
+@app.route("/signup", methods=["POST"])
+def signup():
+    body = json.loads(request.data)
+    this_user = User.query.filter_by(email=body["email"]).first()
+    if this_user is not None:
+        return jsonify({"msg": "User already exists"}), 400
+    new_user = User(email=body["email"], password=body["password"])
+    db.session.add(new_user)
+    db.session.commit()
+    return jsonify({"msg": "User created"}), 201
+
+# @app.route("/logout", methods=["POST"])
+# def logout():
+
 
 # any other endpoint will try to serve it like a static file
 @app.route('/<path:path>', methods=['GET'])
